@@ -45,10 +45,10 @@ type Device struct {
 	magYAdjust        float32
 	magZAdjust        float32
 	fifo              FIFO
-	ax, ay, az        float32
-	gx, gy, gz        float32
-	hx, hy, hz        float32
-	t                 float32
+	ax, ay, az        int32
+	gx, gy, gz        int32
+	hx, hy, hz        int32
+	t                 int32
 	bias              Values
 	scaleFactor       Values
 	buffer            [21]uint8
@@ -302,18 +302,18 @@ func (d *Device) ReadSensor() {
 	data := make([]byte, 21)
 	// read all sensors data at once
 	d.bus.ReadRegister(MPU9250_Address, ACCEL_XOUT_H, data)
-	ax := float32((uint16(data[0]) << 8) | uint16(data[1]))
-	ay := float32((uint16(data[2]) << 8) | uint16(data[3]))
-	az := float32((uint16(data[4]) << 8) | uint16(data[5]))
-	t := float32((uint16(data[6]) << 8) | uint16(data[7]))
-	gx := float32((uint16(data[8]) << 8) | uint16(data[9]))
-	gy := float32((uint16(data[10]) << 8) | uint16(data[11]))
-	gz := float32((uint16(data[12]) << 8) | uint16(data[13]))
-	hx := float32((uint16(data[15]) << 8) | uint16(data[14]))
-	hy := float32((uint16(data[17]) << 8) | uint16(data[16]))
-	hz := float32((uint16(data[19]) << 8) | uint16(data[18]))
+	d.ax = int32((uint16(data[0]) << 8) | uint16(data[1]))
+	d.ay = int32((uint16(data[2]) << 8) | uint16(data[3]))
+	d.az = int32((uint16(data[4]) << 8) | uint16(data[5]))
+	d.t = int32((uint16(data[6]) << 8) | uint16(data[7]))
+	d.gx = int32((uint16(data[8]) << 8) | uint16(data[9]))
+	d.gy = int32((uint16(data[10]) << 8) | uint16(data[11]))
+	d.gz = int32((uint16(data[12]) << 8) | uint16(data[13]))
+	d.hx = int32((uint16(data[15]) << 8) | uint16(data[14]))
+	d.hy = int32((uint16(data[17]) << 8) | uint16(data[16]))
+	d.hz = int32((uint16(data[19]) << 8) | uint16(data[18]))
 	// transforms to proper values
-	d.ax = (ay*d.accelScale - d.bias.ax) * d.scaleFactor.ax
+	/*d.ax = (ay*d.accelScale - d.bias.ax) * d.scaleFactor.ax
 	d.ay = (ax*d.accelScale - d.bias.ay) * d.scaleFactor.ay
 	d.az = (-az*d.accelScale - d.bias.az) * d.scaleFactor.az
 	d.gx = (gy*d.accelScale - d.bias.gx) * d.scaleFactor.gx
@@ -322,27 +322,26 @@ func (d *Device) ReadSensor() {
 	d.hx = (hx*d.magXAdjust - d.bias.hx) * d.scaleFactor.hx
 	d.hy = (hy*d.magYAdjust - d.bias.hy) * d.scaleFactor.hy
 	d.hz = (hz*d.magZAdjust - d.bias.hz) * d.scaleFactor.hz
-	d.t = d.bias.t + (t-d.bias.t)/d.scaleFactor.t
-	println(ax, d.ax, ay, d.accelScale, d.bias.ax, d.scaleFactor.ax)
+	d.t = d.bias.t + (t-d.bias.t)/d.scaleFactor.t*/
 }
 
 // data in m/s²
-func (d *Device) GetAccelData() (x float32, y float32, z float32) {
+func (d *Device) GetAccelData() (x int32, y int32, z int32) {
 	return d.ax, d.ay, d.az
 }
 
 // data in rad/s
-func (d *Device) GetGyroData() (x float32, y float32, z float32) {
+func (d *Device) GetGyroData() (x int32, y int32, z int32) {
 	return d.gx, d.gy, d.gz
 }
 
 // data in µT (T = Tesla)
-func (d *Device) GetMagData() (x float32, y float32, z float32) {
+func (d *Device) GetMagData() (x int32, y int32, z int32) {
 	return d.hx, d.hy, d.hz
 }
 
 // data in ºC
-func (d *Device) GetTemperature() (temperature float32) {
+func (d *Device) GetTemperature() (temperature int32) {
 	return d.t
 }
 
@@ -394,9 +393,9 @@ func (d *Device) calibrateGyro() {
 	for i := 0; i < 100; i++ {
 		d.ReadSensor()
 		x, y, z := d.GetGyroData()
-		gx += (x + d.bias.gx) / 100.0
-		gy += (y + d.bias.gy) / 100.0
-		gz += (z + d.bias.gz) / 100.0
+		gx += (float32(x) + d.bias.gx) / 100.0
+		gy += (float32(y) + d.bias.gy) / 100.0
+		gz += (float32(z) + d.bias.gz) / 100.0
 		time.Sleep(20 * time.Millisecond)
 	}
 	d.bias.gx = gx
@@ -409,8 +408,9 @@ func (d *Device) calibrateGyro() {
 
 func (d *Device) calibrateMag() {
 	d.SetSampleRateDivider(19)
-	xmax, ymax, zmax := d.GetMagData()
-	xmin, ymin, zmin := d.GetMagData()
+	x, y, z := d.GetMagData()
+	xmax, ymax, zmax := float32(x), float32(y), float32(z)
+	xmin, ymin, zmin := xmax, ymax, zmax
 	var xfilt, yfilt, zfilt float32
 	coeff := float32(8)
 	var counter int16
@@ -418,9 +418,9 @@ func (d *Device) calibrateMag() {
 		var delta float32
 		var frameDelta float32
 		d.ReadSensor()
-		xfilt = (xfilt*(coeff-1.0) + (d.hx/d.scaleFactor.hx + d.bias.hx)) / coeff
-		yfilt = (yfilt*(coeff-1.0) + (d.hy/d.scaleFactor.hy + d.bias.hy)) / coeff
-		zfilt = (zfilt*(coeff-1.0) + (d.hz/d.scaleFactor.hz + d.bias.hz)) / coeff
+		xfilt = (xfilt*(coeff-1.0) + (float32(d.hx)/d.scaleFactor.hx + d.bias.hx)) / coeff
+		yfilt = (yfilt*(coeff-1.0) + (float32(d.hy)/d.scaleFactor.hy + d.bias.hy)) / coeff
+		zfilt = (zfilt*(coeff-1.0) + (float32(d.hz)/d.scaleFactor.hz + d.bias.hz)) / coeff
 		if xfilt > xmax {
 			delta = xfilt - xmax
 			xmax = xfilt

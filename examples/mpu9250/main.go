@@ -23,12 +23,12 @@ func main() {
 		ax, ay, az := sensor.GetAccelData()
 		println("ACCELERATION", ax, ay, az)
 
-		/*rx, ry, rz := sensor.GetGyroData()
+		rx, ry, rz := sensor.GetGyroData()
 		println("ROTATION", rx, ry, rz)
 
 		mx, my, mz := sensor.GetMagData()
-		println("MAGNETOMETER", mx, my, mz) */
+		println("MAGNETOMETER", mx, my, mz)
 
-		time.Sleep(1000 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
