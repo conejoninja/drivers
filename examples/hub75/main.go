@@ -4,6 +4,7 @@ import (
 	"machine"
 
 	"image/color"
+
 	"time"
 
 	"github.com/tinygo-org/drivers/examples/hub75/gopherimg"
@@ -40,16 +41,19 @@ func main() {
 	display.SetBrightness(100)
 
 	step := 0
-	then := time.Now()
+	//then := time.Now()
 	size := int16(8)
 	x := int16(0)
 	y := int16(0)
 	dx := int16(1)
 	dy := int16(1)
 	c := 0
+
+	frame := 0
 	for {
-		if time.Since(then).Nanoseconds() > 800000000 {
-			then = time.Now()
+		frame++
+		if frame > 100 {
+			frame = 0
 			step++
 
 			if step < 23 {
@@ -83,6 +87,7 @@ func main() {
 			}
 		}
 		display.Display()
+		time.Sleep(100 * time.Microsecond)
 	}
 }
 
