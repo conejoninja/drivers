@@ -1,0 +1,36 @@
+package max30102
+
+// The I2C address which this device listens to.
+const Address = 0x57
+
+// Registers
+const (
+	INTERRUPT_STATUS_1 = 0x00
+	INTERRUPT_STATUS_2 = 0x01
+	INTERRUPT_ENABLE_1 = 0x02
+	INTERRUPT_ENABLE_2 = 0x03
+
+	FIFO_WRITE    = 0x04
+	FIFO_OVERFLOW = 0x05
+	FIFO_READ     = 0x06
+	FIFO_DATA     = 0x07
+
+	FIFO_CFG   = 0x08
+	MODE_CFG   = 0x09
+	SPO2_CFG   = 0x0A
+	LED1_PA    = 0x0C
+	LED2_PA    = 0x0D
+	PILOT_PA   = 0x10
+	MULTILED_1 = 0x11
+	MULTILED_2 = 0x12
+
+	DIE_TEMP_INTEGER     = 0x1F
+	DIE_TEMP_FRACTION    = 0x20
+	DIE_TEMP_CFG         = 0x21
+	DIE_TEMP_RDY_ENABLE  = 0x02
+	DIE_TEMP_RDY_DISABLE = 0x00
+	DIE_TEMP_MASK        = 0x02
+
+	REVISION_ID = 0xFE
+	PART_ID     = 0xFF
+)
