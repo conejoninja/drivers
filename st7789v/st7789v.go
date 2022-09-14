@@ -6,14 +6,11 @@
 package st7789v // import "tinygo.org/x/drivers/st7789v"
 
 import (
+	"device"
+	"device/rp"
 	"image/color"
 	"machine"
-	"math"
 	"time"
-
-	"errors"
-
-	"tinygo.org/x/drivers"
 )
 
 // Rotation controls the rotation used by the display.
@@ -23,46 +20,43 @@ type MadCtl uint8
 
 // Device wraps an SPI connection.
 type Device struct {
-	bus             drivers.SPI
-	dcPin           machine.Pin
-	resetPin        machine.Pin
-	csPin           machine.Pin
-	blPin           machine.Pin
-	width           int16
-	height          int16
-	columnOffsetCfg int16
-	rowOffsetCfg    int16
-	columnOffset    int16
-	rowOffset       int16
-	rotation        Rotation
-	frameRate       FrameRate
-	batchLength     int32
-	isBGR           bool
-	vSyncLines      int16
+	csPin       machine.Pin
+	dcPin       machine.Pin
+	wrSckPin    machine.Pin
+	rdSckPin    machine.Pin
+	dataPins    [8]machine.Pin
+	blPin       machine.Pin
+	width       int16
+	height      int16
+	rotation    Rotation
+	batchLength int32
+	isBGR       bool
+	buffer      []uint8
 }
 
 // Config is the configuration for the display
 type Config struct {
-	Width        int16
-	Height       int16
-	Rotation     Rotation
-	RowOffset    int16
-	ColumnOffset int16
-	FrameRate    FrameRate
-	VSyncLines   int16
+	Width    int16
+	Height   int16
+	Rotation Rotation
 }
 
 // New creates a new ST7789V connection. The SPI wire must already be configured.
-func New(bus drivers.SPI, resetPin, dcPin, csPin, blPin machine.Pin) Device {
-	dcPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
-	resetPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
+func New(csPin, dcPin, wrSckPin, rdSckPin, blPin machine.Pin, dataPins [8]machine.Pin) Device {
 	csPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	dcPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	wrSckPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	rdSckPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	for i := 0; i < 8; i++ {
+		dataPins[i].Configure(machine.PinConfig{Mode: machine.PinOutput})
+	}
 	blPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	return Device{
-		bus:      bus,
-		dcPin:    dcPin,
-		resetPin: resetPin,
 		csPin:    csPin,
+		dcPin:    dcPin,
+		wrSckPin: wrSckPin,
+		rdSckPin: rdSckPin,
+		dataPins: dataPins,
 		blPin:    blPin,
 	}
 }
@@ -72,7 +66,7 @@ func (d *Device) Configure(cfg Config) {
 	if cfg.Width != 0 {
 		d.width = cfg.Width
 	} else {
-		d.width = 240
+		d.width = 320
 	}
 	if cfg.Height != 0 {
 		d.height = cfg.Height
@@ -80,21 +74,10 @@ func (d *Device) Configure(cfg Config) {
 		d.height = 240
 	}
 
+	d.buffer = make([]uint8, d.width*d.height*2)
 	d.rotation = cfg.Rotation
-	d.rowOffsetCfg = cfg.RowOffset
-	d.columnOffsetCfg = cfg.ColumnOffset
 
-	if cfg.FrameRate != 0 {
-		d.frameRate = cfg.FrameRate
-	} else {
-		d.frameRate = FRAMERATE_60
-	}
-
-	if cfg.VSyncLines >= 2 && cfg.VSyncLines <= 254 {
-		d.vSyncLines = cfg.VSyncLines
-	} else {
-		d.vSyncLines = 16
-	}
+	d.rdSckPin.High()
 
 	d.batchLength = int32(d.width)
 	if d.height > d.width {
@@ -102,131 +85,53 @@ func (d *Device) Configure(cfg Config) {
 	}
 	d.batchLength += d.batchLength & 1
 
-	// Reset the device
-	d.resetPin.High()
-	time.Sleep(50 * time.Millisecond)
-	d.resetPin.Low()
-	time.Sleep(50 * time.Millisecond)
-	d.resetPin.High()
-	time.Sleep(50 * time.Millisecond)
-
 	// Common initialization
-	d.Command(SWRESET)                 // Soft reset
-	time.Sleep(150 * time.Millisecond) //
+	d.Command(SWRESET)
+	time.Sleep(150 * time.Millisecond)
 
-	d.Command(SLPOUT)                  // Exit sleep mode
-	time.Sleep(500 * time.Millisecond) //
+	d.Command(TEON)
+	d.CommandWithData(COLMOD, []byte{0x05})
 
-	// Memory initialization
-	d.Command(COLMOD)                 // Set color mode
-	d.Data(0x55)                      //   16-bit color
-	time.Sleep(10 * time.Millisecond) //
+	d.CommandWithData(PORCTRL, []byte{0x0c, 0x0c, 0x00, 0x33, 0x33})
+	d.CommandWithData(LCMCTRL, []byte{0x2c})
+	d.CommandWithData(VDVVRHEN, []byte{0x01})
+	d.CommandWithData(VRHS, []byte{0x12})
+	d.CommandWithData(VDVS, []byte{0x20})
+	d.CommandWithData(PWCTRL1, []byte{0xa4, 0xa1})
+	d.CommandWithData(FRCTRL2, []byte{0x0f})
 
-	d.SetRotation(d.rotation) // Memory orientation
+	// specific for 320x240 displays
+	d.CommandWithData(GCTRL, []byte{0x35})
+	d.CommandWithData(VCOMS, []byte{0x1f})
+	d.CommandWithData(0xd6, []byte{0xa1})
+	d.CommandWithData(GMCTRP1, []byte{0xd0, 0x08, 0x11, 0x08, 0x0c, 0x15, 0x39, 0x33, 0x50, 0x36, 0x13, 0x14, 0x29, 0x2d})
+	d.CommandWithData(GMCTRN1, []byte{0xd0, 0x08, 0x10, 0x08, 0x06, 0x06, 0x39, 0x44, 0x51, 0x0b, 0x16, 0x14, 0x2f, 0x31})
 
-	d.setWindow(0, 0, d.width, d.height)   // Full draw window
-	d.FillScreen(color.RGBA{0, 0, 0, 255}) // Clear screen
+	d.Command(INVON)
+	d.Command(SLPOUT)
+	d.Command(DISPON)
 
-	// Framerate
-	d.Command(FRCTRL2)         // Frame rate for normal mode
-	d.Data(uint8(d.frameRate)) // Default is 60Hz
+	time.Sleep(100 * time.Millisecond)
 
-	// Frame vertical sync and "porch"
-	//
-	// Front and back porch controls vertical scanline sync time before and after
-	// a frame, where memory can be safely written without tearing.
-	//
-	fp := uint8(d.vSyncLines / 2)         // Split the desired pause half and half
-	bp := uint8(d.vSyncLines - int16(fp)) // between front and back porch.
-
-	d.Command(PORCTRL)
-	d.Data(bp)   // Back porch 5bit     (0x7F max 0x08 default)
-	d.Data(fp)   // Front porch 5bit    (0x7F max 0x08 default)
-	d.Data(0x00) // Seprarate porch     (TODO: what is this?)
-	d.Data(0x22) // Idle mode porch     (4bit-back 4bit-front 0x22 default)
-	d.Data(0x22) // Partial mode porch  (4bit-back 4bit-front 0x22 default)
-
-	// Ready to display
-	d.Command(INVON)                  // Inversion ON
-	time.Sleep(10 * time.Millisecond) //
-
-	d.Command(NORON)                  // Normal mode ON
-	time.Sleep(10 * time.Millisecond) //
-
-	d.Command(DISPON)                 // Screen ON
-	time.Sleep(10 * time.Millisecond) //
+	// specific for 320x240 displays
+	d.CommandWithData(CASET, []byte{uint8(0 >> 8), uint8(0), uint8((d.width - 1) >> 8), uint8(d.width - 1)})
+	d.CommandWithData(RASET, []byte{uint8(0 >> 8), uint8(0), uint8((d.height - 1) >> 8), uint8(d.height - 1)})
+	d.CommandWithData(MADCTL, []byte{uint8(COL_ORDER | SWAP_XY | SCAN_ORDER)})
 
 	d.blPin.High() // Backlight ON
 }
 
-// Sync waits for the display to hit the next VSYNC pause
-func (d *Device) Sync() {
-	d.SyncToScanLine(0)
-}
+// Display updates the display
+func (d *Device) Display() {
+	d.dcPin.Low()
+	d.csPin.Low()
 
-// SyncToScanLine waits for the display to hit a specific scanline
-//
-// A scanline value of 0 will forward to the beginning of the next VSYNC,
-// even if the display is currently in a VSYNC pause.
-//
-// Syncline values appear to increment once for every two vertical
-// lines on the display.
-//
-// NOTE: Use GetHighestScanLine and GetLowestScanLine to obtain the highest
-// and lowest useful values. Values are affected by front and back porch
-// vsync settings (derived from VSyncLines configuration option).
-//
-func (d *Device) SyncToScanLine(scanline uint16) {
-	scan := d.GetScanLine()
+	d.Tx([]byte{RAMWR})
 
-	// Sometimes GetScanLine returns erroneous 0 on first call after draw, so double check
-	if scan == 0 {
-		scan = d.GetScanLine()
-	}
+	d.dcPin.Low()
+	d.Tx(d.buffer)
 
-	if scanline == 0 {
-		// we dont know where we are in an ongoing vsync so go around
-		for scan < 1 {
-			time.Sleep(1 * time.Millisecond)
-			scan = d.GetScanLine()
-		}
-		for scan > 0 {
-			scan = d.GetScanLine()
-		}
-	} else {
-		// go around unless we're very close to the target
-		for scan > scanline+4 {
-			time.Sleep(1 * time.Millisecond)
-			scan = d.GetScanLine()
-		}
-		for scan < scanline {
-			scan = d.GetScanLine()
-		}
-	}
-}
-
-// GetScanLine reads the current scanline value from the display
-func (d *Device) GetScanLine() uint16 {
-	data := []uint8{0x00, 0x00}
-	d.Rx(GSCAN, data)
-	return uint16(data[0])<<8 + uint16(data[1])
-}
-
-// GetHighestScanLine calculates the last scanline id in the frame before VSYNC pause
-func (d *Device) GetHighestScanLine() uint16 {
-	// Last scanline id appears to be backporch/2 + 320/2
-	return uint16(math.Ceil(float64(d.vSyncLines)/2)/2) + 160
-}
-
-// GetLowestScanLine calculate the first scanline id to appear after VSYNC pause
-func (d *Device) GetLowestScanLine() uint16 {
-	// First scanline id appears to be backporch/2 + 1
-	return uint16(math.Ceil(float64(d.vSyncLines)/2)/2) + 1
-}
-
-// Display does nothing, there's no buffer as it might be too big for some boards
-func (d *Device) Display() error {
-	return nil
+	d.csPin.High()
 }
 
 // SetPixel sets a pixel in the screen
@@ -236,20 +141,23 @@ func (d *Device) SetPixel(x int16, y int16, c color.RGBA) {
 			((d.rotation == ROTATION_90 || d.rotation == ROTATION_270) && (x >= d.height || y >= d.width))) {
 		return
 	}
-	d.FillRectangle(x, y, 1, 1, c)
+	//d.FillRectangle(x, y, 1, 1, c)
+	cint := RGBATo565(c)
+	d.buffer[2*(x+y*d.width)] = uint8(cint >> 8)
+	d.buffer[2*(x+y*d.width)+1] = uint8(cint)
 }
 
+/*
 // setWindow prepares the screen to be modified at a given rectangle
 func (d *Device) setWindow(x, y, w, h int16) {
 	x += d.columnOffset
 	y += d.rowOffset
-	d.Tx([]uint8{CASET}, true)
-	d.Tx([]uint8{uint8(x >> 8), uint8(x), uint8((x + w - 1) >> 8), uint8(x + w - 1)}, false)
-	d.Tx([]uint8{RASET}, true)
-	d.Tx([]uint8{uint8(y >> 8), uint8(y), uint8((y + h - 1) >> 8), uint8(y + h - 1)}, false)
+	d.CommandWithData(CASET, []byte{uint8(x >> 8), uint8(x), uint8((x + w - 1) >> 8), uint8(x + w - 1)})
+	d.CommandWithData(RASET, []byte{uint8(y >> 8), uint8(y), uint8((y + h - 1) >> 8), uint8(y + h - 1)})
 	d.Command(RAMWR)
-}
+} */
 
+/*
 // FillRectangle fills a rectangle at a given coordinates with a color
 func (d *Device) FillRectangle(x, y, width, height int16, c color.RGBA) error {
 	k, i := d.Size()
@@ -338,9 +246,9 @@ func (d *Device) FillScreen(c color.RGBA) {
 	} else {
 		d.FillRectangle(0, 0, d.height, d.width, c)
 	}
-}
+}  */
 
-// SetRotation changes the rotation of the device (clock-wise)
+/*// SetRotation changes the rotation of the device (clock-wise)
 func (d *Device) SetRotation(rotation Rotation) {
 	madctl := uint8(0)
 	switch rotation % 4 {
@@ -369,40 +277,45 @@ func (d *Device) SetRotation(rotation Rotation) {
 	}
 	d.Command(MADCTL)
 	d.Data(madctl)
-}
+}*/
 
 // Command sends a command to the display.
 func (d *Device) Command(command uint8) {
-	d.Tx([]byte{command}, true)
+	d.dcPin.Low()
+	d.csPin.Low()
+
+	d.Tx([]byte{command})
+
+	d.csPin.High()
 }
 
-// Data sends data to the display.
-func (d *Device) Data(data uint8) {
-	d.Tx([]byte{data}, false)
+// CommandWithData sends a command and data to the display.
+func (d *Device) CommandWithData(command uint8, data []byte) {
+	d.dcPin.Low()
+	d.csPin.Low()
+
+	d.Tx([]byte{command})
+
+	d.dcPin.Low()
+	d.Tx(data)
+
+	d.csPin.High()
 }
 
 // Tx sends data to the display
-func (d *Device) Tx(data []byte, isCommand bool) {
-	if isCommand {
-		d.dcPin.Low()
-	} else {
-		d.dcPin.High()
-	}
-	d.csPin.Low()
-	d.bus.Tx(data, nil)
-	d.csPin.High()
-}
+func (d *Device) Tx(data []byte) {
+	// TODO
+	l := len(data)
+	for i := 0; i < l/2; i++ {
+		data32 := uint32(0xffff) //data[i])
+		d.wrSckPin.Low()
+		rp.SIO.GPIO_OUT_CLR.Set(0xFFFF << uint8(d.dataPins[0]))
+		rp.SIO.GPIO_OUT_SET.Set(data32 << uint8(d.dataPins[0]))
+		device.Asm(`nop`)
+		d.wrSckPin.High()
+		device.Asm(`nop`)
 
-// Rx reads data from the display
-func (d *Device) Rx(command uint8, data []byte) {
-	d.dcPin.Low()
-	d.csPin.Low()
-	d.bus.Transfer(command)
-	d.dcPin.High()
-	for i := range data {
-		data[i], _ = d.bus.Transfer(0xFF)
 	}
-	d.csPin.High()
 }
 
 // Size returns the current size of the display.
@@ -436,6 +349,7 @@ func (d *Device) IsBGR(bgr bool) {
 	d.isBGR = bgr
 }
 
+/*
 // SetScrollArea sets an area to scroll with fixed top and bottom parts of the display.
 func (d *Device) SetScrollArea(topFixedArea, bottomFixedArea int16) {
 	d.Command(VSCRDEF)
@@ -455,7 +369,7 @@ func (d *Device) SetScroll(line int16) {
 // StopScroll returns the display to its normal state.
 func (d *Device) StopScroll() {
 	d.Command(NORON)
-}
+}*/
 
 // RGBATo565 converts a color.RGBA to uint16 used in the display
 func RGBATo565(c color.RGBA) uint16 {
