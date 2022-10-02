@@ -13,10 +13,10 @@ import (
 type Device struct {
 	bus        drivers.I2C
 	Address    uint16
-	TVOC       uint8
-	eCO2       uint8
-	TVOCBase   uint8
-	eCO2Base   uint8
+	tvoc       uint8
+	eco2       uint8
+	tvocBase   uint8
+	eco2Base   uint8
 	rawEthanol uint8
 	rawH2      uint8
 }
@@ -45,7 +45,7 @@ func (d *Device) Connected() bool {
 }
 
 // Configure sets up the device for communication
-func (d *Device) Configure(use2v8Mode bool) bool {
+func (d *Device) Configure() bool {
 	if !d.Connected() {
 		return false
 	}
@@ -57,10 +57,8 @@ func (d *Device) Configure(use2v8Mode bool) bool {
 		return false
 	}
 
-	if d.initSensor() {
-		if !d.IAQInit() {
-			return false
-		}
+	if !d.IAQInit() {
+		return false
 	}
 
 	return true
@@ -81,8 +79,8 @@ func (d *Device) IAQMeasure() bool {
 	if !success {
 		return false
 	}
-	d.TVOC = data[0]
-	d.eCO2 = data[1]
+	d.tvoc = data[0]
+	d.eco2 = data[1]
 	return true
 }
 
@@ -101,19 +99,39 @@ func (d *Device) GetIAQBaseline() bool {
 	if !success {
 		return false
 	}
-	d.eCO2Base = data[0]
-	d.TVOCBase = data[1]
+	d.eco2Base = data[0]
+	d.tvocBase = data[1]
 	return true
 }
 
-func (d *Device) SetIAQBaseline() bool {
-	data, success := d.readWordFromCommand([]byte{0x20, 0x15}, 2)
-	if !success {
+func (d *Device) SetIAQBaseline(eco2Base, tvocBase uint16) bool {
+	_, success := d.readWordFromCommand([]byte{
+		0x20,
+		0x1e,
+		uint8(tvocBase >> 8),
+		uint8(tvocBase & 0xff),
+		d.generateCRC([]byte{uint8(tvocBase >> 8), uint8(tvocBase & 0xff)}),
+		uint8(eco2Base >> 8),
+		uint8(eco2Base & 0xff),
+		d.generateCRC([]byte{uint8(eco2Base >> 8), uint8(eco2Base & 0xff)}),
+	}, 10)
+	return success
+}
+
+func (d *Device) SetHumidity(absoluteHumidity uint32) bool {
+	if absoluteHumidity > 256000 {
 		return false
 	}
-	d.eCO2Base = data[0]
-	d.TVOCBase = data[1]
-	return true
+
+	ahScaled := uint16((uint64(absoluteHumidity) * 256 * 16777) >> 24)
+	_, success := d.readWordFromCommand([]byte{
+		0x20,
+		0x61,
+		uint8(ahScaled >> 8),
+		uint8(ahScaled & 0xff),
+		d.generateCRC([]byte{uint8(ahScaled >> 8), uint8(ahScaled & 0xff)}),
+	}, 10)
+	return success
 }
 
 func (d *Device) readWordFromCommand(cmd []byte, readLength uint8) ([]byte, bool) {
@@ -147,4 +165,20 @@ func (d *Device) generateCRC(data []byte) byte {
 		}
 	}
 	return crc
+}
+
+func (d *Device) GetTVOC() uint8 {
+	return d.tvoc
+}
+
+func (d *Device) GetECO2() uint8 {
+	return d.eco2
+}
+
+func (d *Device) GetRawH2() uint8 {
+	return d.rawH2
+}
+
+func (d *Device) GetRawEthanol() uint8 {
+	return d.rawEthanol
 }
