@@ -35,9 +35,9 @@ func main() {
 	display.FillRectangle(0, height/2, width/2, height/2, green)
 	display.FillRectangle(width/2, height/2, width/2, height/2, blue)
 	display.FillRectangle(width/4, height/4, width/2, height/2, black)*/
-	display.SetPixel(0, 0, white)
-	display.SetPixel(0, 1, red)
-	display.SetPixel(0, 2, blue)
-	display.SetPixel(0, 3, green)
-	display.SetPixel(0, 4, black)
+	display.SetPixel(20, 20, white)
+	display.SetPixel(20, 21, red)
+	display.SetPixel(20, 22, blue)
+	display.SetPixel(20, 23, green)
+	display.SetPixel(20, 24, black)
 }
